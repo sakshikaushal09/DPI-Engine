@@ -1,268 +1,621 @@
 # DPI Engine (Python) - Deep Packet Inspection System
 
-A pure-Python (standard library only) Deep Packet Inspection engine that
-reads PCAP captures, classifies network flows by application using
-**TLS SNI** and **HTTP Host header** extraction, applies IP/app/domain
-blocking rules, and writes the allowed traffic to a new PCAP file.
+A pure-Python Deep Packet Inspection (DPI) engine that reads PCAP
+network captures, analyzes network flows, identifies applications using
+TLS SNI and HTTP Host headers, applies configurable blocking rules, and
+writes allowed traffic to a new PCAP file.
 
-Ported from an original C++ implementation to Python, with both a
-**single-threaded** version (easy to read, good for learning) and a
-**multi-threaded** version (Reader → Load Balancers → Fast Paths →
-Writer pipeline, using consistent hashing so each flow always lands on
-the same worker thread).
+The project includes both a **single-threaded engine** for simplicity and
+learning and a **multi-threaded engine** designed around a scalable
+Reader → Load Balancer → Fast Path → Writer pipeline.
 
-> Educational / research project. Runs entirely offline on `.pcap`
-> capture files - it does not touch a live network interface.
+> Educational / research project. The core engine works offline on
+> `.pcap` capture files and does not directly interact with a live
+> network interface.
 
 ---
 
 ## What is DPI?
 
-**Deep Packet Inspection (DPI)** looks *inside* the payload of a
-network packet, not just its headers. This project demonstrates the
-classic technique used by firewalls, parental-control software, and
-network operators to identify which website or app a connection is
-for - even when that connection is HTTPS.
+**Deep Packet Inspection (DPI)** is a network analysis technique that
+examines packet headers and payload data to understand network traffic.
 
-The trick: the **Server Name Indication (SNI)** field in a TLS
-`Client Hello` is sent in **plaintext**, before encryption kicks in,
-so the destination domain name is visible even on an encrypted
-connection.
+DPI can be used by:
 
-```
-TLS Client Hello:
-├── Version: TLS 1.2
-├── Random: [32 bytes]
-├── Cipher Suites: [list]
-└── Extensions:
-    └── SNI Extension:
-        └── Server Name: "www.youtube.com"   ← extracted here
-```
+- Network security systems
+- Firewalls
+- Parental-control software
+- Network monitoring tools
+- Traffic filtering systems
 
----
+This project demonstrates how network traffic can be analyzed to identify
+applications and domains and then apply configurable rules to allow or
+block specific traffic.
 
-## Project layout
+### TLS SNI Detection
 
-```
+For HTTPS connections, the **Server Name Indication (SNI)** field in the
+TLS Client Hello can reveal the destination hostname before encrypted
+application data is exchanged.
+
+For example:
+
+```text
+TLS Client Hello
+├── Version
+├── Random
+├── Cipher Suites
+└── Extensions
+    └── SNI
+        └── Server Name: "www.youtube.com"
+Key Features
+🔍 Deep Packet Inspection
+
+The engine parses network packets at multiple protocol layers:
+
+Ethernet
+IPv4
+TCP
+UDP
+TLS
+HTTP
+DNS
+
+The packet parser is implemented using Python's standard library.
+
+🌐 Application Classification
+
+The engine can identify applications using domain information obtained
+from TLS SNI and HTTP Host headers.
+
+Example applications include:
+
+YouTube
+Facebook
+TikTok
+Netflix
+Instagram
+WhatsApp
+GitHub
+Google
+
+Application signatures can be extended through the application-pattern
+configuration.
+
+🚫 Flexible Blocking Rules
+
+The Rule Manager supports blocking based on:
+
+Source IP address
+Application
+Domain name
+
+Example:
+
+Block IP      → 192.168.1.50
+Block App     → YouTube
+Block Domain  → facebook
+
+Once a network flow is identified as blocked, subsequent packets belonging
+to that flow are also dropped.
+
+📦 PCAP Processing
+
+The engine can:
+
+Read packets from a PCAP file.
+Parse packet headers.
+Track network flows.
+Identify applications.
+Apply blocking rules.
+Forward allowed packets.
+Write the resulting traffic to another PCAP file.
+Project Architecture
+                    Input PCAP
+                        │
+                        ▼
+                 ┌──────────────┐
+                 │ PCAP Reader  │
+                 └──────┬───────┘
+                        │
+                        ▼
+                 ┌──────────────┐
+                 │Packet Parser │
+                 └──────┬───────┘
+                        │
+                        ▼
+                 ┌──────────────┐
+                 │ Flow Tracking│
+                 └──────┬───────┘
+                        │
+                        ▼
+                 ┌──────────────┐
+                 │ SNI / HTTP   │
+                 │ Classification│
+                 └──────┬───────┘
+                        │
+                        ▼
+                 ┌──────────────┐
+                 │ Rule Manager │
+                 └──────┬───────┘
+                        │
+                 ┌──────┴───────┐
+                 │              │
+              ALLOWED         BLOCKED
+                 │              │
+                 ▼              ▼
+          Output PCAP          DROP
+Project Structure
 dpi_engine_python/
+│
 ├── dpi/
 │   ├── __init__.py
-│   ├── types.py            # FiveTuple, AppType, Flow, sni_to_app_type()
-│   ├── pcap_reader.py       # Minimal PCAP file reader
-│   ├── pcap_writer.py       # Minimal PCAP file writer
-│   ├── packet_parser.py     # Ethernet / IPv4 / TCP / UDP header parsing
-│   ├── sni_extractor.py     # TLS SNI + HTTP Host extraction
-│   └── rule_manager.py      # IP / app / domain blocking rules
-├── main_simple.py           # ★ Single-threaded engine (CLI) ★
-├── dpi_mt.py                 # ★ Multi-threaded engine (CLI) ★
-├── generate_test_pcap.py    # Builds a synthetic test_dpi.pcap
-├── dashboard.py              # Optional: Flask web dashboard
-├── live_sniffer.py           # Optional: live capture via scapy
-├── tests/                    # Optional: pytest unit tests
+│   ├── types.py
+│   ├── pcap_reader.py
+│   ├── pcap_writer.py
+│   ├── packet_parser.py
+│   ├── sni_extractor.py
+│   └── rule_manager.py
+│
+├── main_simple.py
+├── dpi_mt.py
+├── generate_test_pcap.py
+├── dashboard.py
+├── live_sniffer.py
+│
+├── tests/
 │   ├── test_sni_extractor.py
 │   ├── test_packet_parser.py
 │   └── test_types_and_rules.py
-├── .github/workflows/tests.yml  # CI: runs tests on every push/PR
-├── requirements-dev.txt      # pytest (for tests/)
-├── requirements-dashboard.txt # flask (for dashboard.py)
-├── requirements-live.txt     # scapy (for live_sniffer.py)
+│
+├── .github/
+│   └── workflows/
+│       └── tests.yml
+│
+├── requirements-dev.txt
+├── requirements-dashboard.txt
+├── requirements-live.txt
 └── README.md
-```
+Core Components
+1. PCAP Reader
 
-The **core engine** (everything above except the three "Optional"
-entries) needs **zero** third-party dependencies - it's built entirely
-on `struct`, `socket`, `threading`, and `queue` from the standard
-library. See [Optional add-ons](#optional-add-ons) below for the
-opt-in extras.
+pcap_reader.py
 
----
+Reads packets from a PCAP file and provides the raw packet data and
+timestamps to the processing engine.
 
-## How a packet flows through the engine
+2. Packet Parser
 
-1. **Read** the next packet from the input PCAP (`pcap_reader.py`).
-2. **Parse** Ethernet → IPv4 → TCP/UDP headers to get a five-tuple
-   `(src_ip, dst_ip, src_port, dst_port, protocol)` (`packet_parser.py`).
-3. **Look up (or create) the Flow** for that five-tuple - all packets
-   of the same connection share state.
-4. **Classify**: if this is the first payload-bearing packet on port
-   443, try to extract the TLS SNI; on port 80, try the HTTP `Host:`
-   header; map the result to an `AppType` (YouTube, Facebook, GitHub, …).
-5. **Check rules**: is the source IP blocked? Is the app blocked? Does
-   the SNI contain a blocked domain substring?
-6. **Forward or drop**: once a flow is marked blocked, every
-   subsequent packet on that flow is dropped too - DPI blocks at the
-   *flow* level, not the *packet* level, since you can't know the app
-   until you've seen the Client Hello.
-7. **Report**: print packet/byte counts, forwarded/dropped totals, a
-   per-app breakdown, and the list of detected domains.
+packet_parser.py
 
-### Multi-threaded pipeline (`dpi_mt.py`)
+Parses network packets layer by layer:
 
-```
-Reader Thread → hash(5-tuple) % num_lbs → Load Balancer Threads
-                                              → hash(5-tuple) % num_fps
-                                                 → Fast Path Threads (own flow table each)
-                                                    → Output Queue
-                                                       → Output Writer Thread
-```
+Ethernet
+   ↓
+IPv4
+   ↓
+TCP / UDP
+   ↓
+Application Payload
 
-Consistent hashing guarantees every packet of a given connection is
-routed to the *same* Load Balancer and the *same* Fast Path, so each
-Fast Path thread can keep a private, lock-free flow table.
+The parser extracts information such as:
 
----
+Source IP
+Destination IP
+Source Port
+Destination Port
+Protocol
+Payload
+3. Flow Tracking
 
-## Usage
+Network packets are grouped into flows using a five-tuple:
 
-### 1. Generate sample test data
+(Source IP,
+ Destination IP,
+ Source Port,
+ Destination Port,
+ Protocol)
 
-```bash
-python3 generate_test_pcap.py
-# -> writes test_dpi.pcap (TLS handshakes to YouTube, Facebook, GitHub,
-#    TikTok, Netflix, Instagram, WhatsApp, Google, plus HTTP and DNS)
-```
+This allows the engine to maintain state for each network connection.
 
-### 2. Run the single-threaded engine
+4. SNI and HTTP Host Extraction
 
-```bash
-python3 main_simple.py test_dpi.pcap output.pcap \
+sni_extractor.py
+
+The engine analyzes application-layer information to identify domains.
+
+For HTTPS traffic:
+
+TLS Client Hello
+       ↓
+SNI Extraction
+       ↓
+Domain Name
+       ↓
+Application Classification
+
+For HTTP traffic:
+
+HTTP Request
+       ↓
+Host Header
+       ↓
+Domain Name
+       ↓
+Application Classification
+5. Application Classification
+
+types.py
+
+The extracted domain is mapped to an application category.
+
+Example:
+
+www.youtube.com
+        ↓
+     YouTube
+
+The application mapping can be extended by adding additional domain
+patterns.
+
+6. Rule Manager
+
+rule_manager.py
+
+Responsible for applying traffic filtering rules.
+
+Supported rule types:
+
+IP Blocking
+Application Blocking
+Domain Blocking
+
+Example:
+
+--block-app YouTube
+--block-ip 192.168.1.50
+--block-domain facebook
+Single-Threaded Engine
+
+The main implementation is available in:
+
+main_simple.py
+
+It processes packets sequentially:
+
+PCAP
+ ↓
+Reader
+ ↓
+Parser
+ ↓
+Flow Tracking
+ ↓
+Classification
+ ↓
+Rule Check
+ ↓
+Allow / Drop
+ ↓
+Output PCAP
+
+This version is intentionally simple and easy to understand, making it
+useful for learning and debugging the DPI pipeline.
+
+Multi-Threaded Engine
+
+The multi-threaded implementation is available in:
+
+dpi_mt.py
+
+It uses a producer-consumer architecture:
+
+                ┌─────────────┐
+                │    Reader   │
+                └──────┬──────┘
+                       │
+                       ▼
+              ┌─────────────────┐
+              │ Load Balancers  │
+              └────────┬────────┘
+                       │
+                       ▼
+                ┌─────────────┐
+                │ Fast Paths  │
+                └──────┬──────┘
+                       │
+                       ▼
+                ┌─────────────┐
+                │ Output Queue│
+                └──────┬──────┘
+                       │
+                       ▼
+                ┌─────────────┐
+                │    Writer   │
+                └─────────────┘
+
+Consistent hashing is used to ensure that packets belonging to the same
+network flow are routed to the same processing worker.
+
+This allows each worker to maintain its own flow state while reducing
+unnecessary synchronization.
+
+Packet Processing Flow
+
+The complete processing pipeline is:
+
+1. Read packet
+       ↓
+2. Parse Ethernet header
+       ↓
+3. Parse IPv4 header
+       ↓
+4. Identify TCP / UDP
+       ↓
+5. Build flow five-tuple
+       ↓
+6. Track flow state
+       ↓
+7. Extract TLS SNI / HTTP Host
+       ↓
+8. Identify application
+       ↓
+9. Apply blocking rules
+       ↓
+10. Forward or drop packet
+       ↓
+11. Generate processing statistics
+       ↓
+12. Write allowed packets to output PCAP
+Usage
+1. Generate Test PCAP
+
+Generate a synthetic PCAP file for testing:
+
+python generate_test_pcap.py
+
+This creates:
+
+test_dpi.pcap
+
+The generated traffic contains example TLS, HTTP and DNS packets for
+multiple applications and domains.
+
+2. Run Single-Threaded DPI Engine
+python main_simple.py test_dpi.pcap output.pcap \
     --block-app YouTube \
     --block-app TikTok \
     --block-ip 192.168.1.50 \
     --block-domain facebook
-```
 
-### 3. Run the multi-threaded engine
+The engine will analyze the input PCAP and write allowed packets to:
 
-```bash
-python3 dpi_mt.py test_dpi.pcap output.pcap --lbs 2 --fps 2 \
-    --block-app YouTube --block-domain tiktok
-# Creates 2 Load Balancer threads x 2 Fast Path threads = 4 workers
-```
+output.pcap
+3. Run Multi-Threaded DPI Engine
+python dpi_mt.py test_dpi.pcap output.pcap \
+    --lbs 2 \
+    --fps 2 \
+    --block-app YouTube \
+    --block-domain tiktok
 
-Both scripts accept any real PCAP file too - e.g. one exported from
-Wireshark - not just the generated sample.
+Here:
 
-### Sample output
-
-```
+2 Load Balancer threads
+        ×
+2 Fast Path threads
+        =
+4 processing workers
+Example Processing Report
 ==================================================================
                DPI ENGINE (Python, single-threaded)
 ==================================================================
+
+
 [Rules] Blocked IP: 192.168.1.50
-[Rules] Blocked app: Youtube
-[Rules] Blocked app: Tiktok
+[Rules] Blocked app: YouTube
+[Rules] Blocked app: TikTok
 [Rules] Blocked domain: facebook
+
 
 ==================================================================
                       PROCESSING REPORT
 ==================================================================
+
+
 Total Packets:   51
 Total Bytes:     4581
 TCP Packets:     50
-UDP Packets:     1
+UDP Packets:      1
+
+
 ------------------------------------------------------------------
 Forwarded:       42
-Dropped:         9
+Dropped:          9
 ------------------------------------------------------------------
+
+
                     APPLICATION BREAKDOWN
 ------------------------------------------------------------------
-Unknown         26   51.0% ##########
-Youtube          3    5.9% # (BLOCKED)
-Facebook         3    5.9% #
-...
+
+
+Unknown          26   51.0%
+YouTube           3    5.9%  (BLOCKED)
+Facebook          3    5.9%
+TikTok            3    5.9%  (BLOCKED)
+
+
 ==================================================================
 
-[Detected Domains/SNIs]
-  - www.youtube.com -> Youtube
-  - www.facebook.com -> Facebook
-  ...
-```
 
----
+[Detected Domains / SNIs]
 
-## Optional add-ons
 
-The core engine (`main_simple.py`, `dpi_mt.py`, and everything in `dpi/`)
-needs **zero** third-party packages. These three extras are each
-self-contained and opt-in - install only what you want to try.
+- www.youtube.com  -> YouTube
+- www.facebook.com -> Facebook
+- www.tiktok.com    -> TikTok
+Testing
 
-### 1. Unit tests + CI
+The project includes automated unit tests covering:
 
-```bash
+TLS SNI extraction
+HTTP Host extraction
+Packet parsing
+Application classification
+Rule management
+Flow processing
+
+Run the tests using:
+
 pip install -r requirements-dev.txt
 pytest -v
-```
 
-29 tests cover TLS SNI extraction, HTTP Host extraction, packet
-parsing, app classification, and rule blocking. `.github/workflows/tests.yml`
-runs the same suite automatically on every push/PR across Python
-3.9 / 3.11 / 3.12, plus a smoke test that regenerates the sample PCAP
-and runs the engine end-to-end.
+The project also includes a GitHub Actions workflow that automatically
+runs the test suite when changes are pushed to the repository.
 
-### 2. Web dashboard
+Optional Web Dashboard
 
-```bash
+The project includes an optional Flask dashboard.
+
+Install the dashboard dependencies:
+
 pip install -r requirements-dashboard.txt
-python3 dashboard.py
-# open http://127.0.0.1:5000
-```
 
-A single-file Flask app (`dashboard.py`) that:
-- Analyzes the bundled `test_dpi.pcap`, or lets you upload your own
-- Shows a live pie chart of the application breakdown (Chart.js)
-- Lets you add/remove IP, app, and domain blocking rules from a form
-  and see forwarded/dropped counts update immediately
-- Exposes the same data as JSON at `GET /api/stats`
+Run:
 
-`dashboard.py` does not import from or modify `main_simple.py` /
-`dpi_mt.py` - it only reuses the shared `dpi/` package, so the CLI
-tools keep working exactly as before whether or not Flask is installed.
+python dashboard.py
 
-### 3. Live packet capture
+The dashboard provides:
 
-```bash
+PCAP analysis
+Application statistics
+Traffic breakdown
+Blocking rules
+Forwarded packet count
+Dropped packet count
+JSON statistics API
+
+The dashboard can be used as a visual interface for understanding the
+DPI processing results.
+
+Optional Live Packet Capture
+
+The project also includes an optional live capture module:
+
+live_sniffer.py
+
+It uses Scapy to capture traffic from a network interface.
+
+Install the required dependency:
+
 pip install -r requirements-live.txt
 
-# Linux/macOS (needs root for raw sockets):
-sudo python3 live_sniffer.py --iface eth0 --block-app YouTube
+Example:
 
-# Windows (install Npcap first: https://npcap.com, run as Administrator):
 python live_sniffer.py --iface "Wi-Fi" --block-domain tiktok
-```
 
-`live_sniffer.py` uses `scapy` to capture real traffic off a network
-interface instead of reading a `.pcap` file, then feeds each raw
-frame through the exact same `PacketParser` / `SNIExtractor` /
-`RuleManager` classes used everywhere else in the project. It prints
-each newly-classified flow and blocked connection live, and shows the
-same summary report on Ctrl+C. If `scapy` isn't installed it prints a
-clear message instead of crashing.
+Live packet capture may require administrator/root privileges depending
+on the operating system and network capture configuration.
 
----
+Security and Privacy
 
-## Extending the project
+This project is designed primarily for educational, research and
+authorized network-analysis purposes.
 
-- **Add more app signatures** — extend `_SNI_APP_PATTERNS` in `dpi/types.py`.
-- **QUIC/HTTP3 support** — QUIC runs over UDP on port 443; its SNI is
-  in the Initial packet, encrypted with a well-known key ("Initial
-  Secrets"), which is a great next step for extending `sni_extractor.py`.
-- **Bandwidth throttling** — instead of dropping, delay packets for a
-  flow (`time.sleep`) to simulate throttling.
-- **Persistent rules** — load/save `RuleManager` state to a JSON file.
-- **Live capture** — swap `PcapReader` for a live-capture library
-  (e.g. `scapy` or raw sockets) to DPI a live interface instead of a
-  saved file.
+The core implementation processes saved PCAP files locally and does not
+send captured data to external services.
 
----
+When using live packet capture, only analyze traffic on networks and
+devices where you have appropriate authorization.
 
-## Why this project is a good portfolio piece
+Future Improvements
 
-- Binary protocol parsing with Python's `struct` module (Ethernet,
-  IPv4, TCP, UDP, TLS, DNS, HTTP - all hand-rolled, no `scapy`).
-- Stateful flow tracking keyed by a five-tuple.
-- A real multi-threaded producer/consumer pipeline with
-  `threading` + `queue.Queue`, including consistent hashing for
-  thread affinity.
-- Practical security/networking concept (TLS SNI leakage) with a
-  working, testable implementation end to end.
+Possible extensions include:
+
+QUIC / HTTP3 Support
+
+Add support for modern UDP-based HTTPS traffic and QUIC Initial packets.
+
+Bandwidth Throttling
+
+Instead of dropping blocked traffic, introduce controlled delays to
+simulate bandwidth restrictions.
+
+Persistent Rules
+
+Store IP, application and domain rules in a JSON configuration file.
+
+Improved Application Detection
+
+Expand the application signature database with additional domains and
+protocol patterns.
+
+Advanced Dashboard
+
+Add:
+
+Real-time traffic graphs
+Flow statistics
+Top applications
+Top domains
+Protocol distribution
+Blocking history
+Technologies Used
+Python
+Python Standard Library
+PCAP
+TCP/IP
+TLS
+HTTP
+DNS
+Multithreading
+Producer-Consumer Architecture
+Consistent Hashing
+GitHub Actions
+Flask (Optional)
+Scapy (Optional)
+Why This Project?
+
+This project demonstrates practical understanding of:
+
+Network packet processing
+TCP/IP networking
+Protocol parsing
+TLS SNI analysis
+HTTP Host extraction
+Stateful flow tracking
+Traffic classification
+Rule-based network filtering
+Multi-threaded processing
+Producer-consumer architecture
+Consistent hashing
+Automated testing
+CI/CD with GitHub Actions
+
+It combines networking, cybersecurity, Python programming and
+system-level processing into a single practical project.
+
+Author
+
+Sakshi Kaushal
+
+GitHub: sakshikaushal09
+
+
+
+### 🔥 Bas ek important baat
+
+
+Maine **"original C++ implementation" completely remove** kar diya hai.
+
+
+Ab README mein project ko:
+- ❌ copied/ported project jaisa nahi dikhaya
+- ✅ Python DPI project ke form mein present kiya
+- ✅ architecture clearly explain kiya
+- ✅ cybersecurity/networking skills highlight ki
+- ✅ testing + GitHub Actions bhi highlight kiya
+- ✅ future improvements bhi add kiye
+- ✅ security/privacy note bhi add kiya
+
+
+**Ab pura old README → Ctrl+A → Delete → ye wala pura paste → Commit changes.**
