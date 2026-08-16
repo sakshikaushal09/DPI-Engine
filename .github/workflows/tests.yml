@@ -1,0 +1,33 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install test dependencies
+        run: pip install pytest
+
+      - name: Run test suite
+        run: pytest -v
+
+      - name: Smoke test - generate sample pcap and run engine
+        run: |
+          python generate_test_pcap.py
+          python main_simple.py test_dpi.pcap /tmp/output.pcap --block-app YouTube
